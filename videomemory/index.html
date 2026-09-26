@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fast-weight memory for long video generation</title>
+<meta name="description" content="A memory updated during generation, added to a streaming video diffusion model to keep a subject's identity beyond the attention window. In my runs it did not help.">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '\\(', right: '\\)', display: false}]})"></script>
+<style>
+  body {
+    margin: 0;
+    background: #fff;
+    color: #222;
+    font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", Arial, sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 56px 20px 64px; }
+  header { text-align: center; margin-bottom: 32px; }
+  h1 { font-size: 2rem; line-height: 1.25; font-weight: 600; margin: 0 0 16px; }
+  header p { margin: 4px 0; color: #555; }
+  h2 { font-size: 1.3rem; font-weight: 600; margin: 44px 0 12px; }
+  p { margin: 0 0 16px; }
+  a { color: #1a5fb4; }
+  figure { margin: 24px 0 28px; }
+  /* figures are wider than the text on large screens, so that their labels stay readable */
+  figure.wide { width: min(1000px, calc(100vw - 40px)); position: relative; left: 50%; transform: translateX(-50%); }
+  figure img { display: block; width: 100%; height: auto; }
+  figcaption { max-width: 720px; margin: 10px auto 0; color: #666; font-size: 0.9rem; line-height: 1.5; }
+  .eq { overflow-x: auto; }
+  footer { margin-top: 48px; color: #666; font-size: 0.88rem; }
+  @media (max-width: 560px) {
+    body { font-size: 16px; }
+    main { padding-top: 36px; }
+    h1 { font-size: 1.55rem; }
+    .eq .katex-display > .katex { font-size: 0.84em; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>Fast-weight memory for long video generation</h1>
+  <p>Aden Elmi</p>
+  <p>Research project, June to September 2026</p>
+</header>
+
+<figure class="wide">
+  <a href="assets/arch_context.png"><img src="assets/arch_context.png" alt="Three consecutive generation steps. The attention window slides forward, and the chunk it drops is written into the memory."></a>
+  <figcaption>Three consecutive steps of generation. Attention covers the sink (the first chunk of
+  the video) and the three most recent chunks. In runs 2 to 4, the chunk that has just left this
+  window is written into the memory, the only way older chunks can still affect generation.</figcaption>
+</figure>
+
+<h2>Abstract</h2>
+<p>Streaming video diffusion models generate a video a few frames at a time and attend only to a
+short window of recent frames. When the frames that introduced a subject leave that window, the
+subject's appearance starts to drift. I added a fast-weight memory to such a model
+(<a href="https://github.com/Wan-Video/Wan2.1">Wan2.1-T2V-1.3B</a> with
+<a href="https://github.com/vivoCameraResearch/Anchor-Forcing">Anchor-Forcing</a>): an MLP added to a few
+transformer blocks, whose weights are updated during generation, with each chunk that leaves
+the attention window. I trained it in four runs and evaluated every checkpoint twice, with the
+memory active and with it zeroed. Identity was lower with the memory active at 10 of the 15
+checkpoints. The checkpoints that froze got high subject-consistency scores from VBench, which
+suggests that the objective and the metrics reward frames that resemble the previous ones, and a
+memory can provide that without recalling the subject.</p>
+
+<h2>Method</h2>
+<p>The model generates 3 latent frames at a time and attends to 12: the first 3 frames of the
+video, kept for the whole generation (the sink), and the 9 most recent. Older frames are dropped.
+A prompt like "a woman in a red coat" fits many women. Once the frames that showed this one are
+gone, her face and clothes start to change.</p>
+<p>In runs 2 to 4 the memory is written with the chunk that has just left the window. Run 1
+writes the chunk being generated instead, which attention can already see. The memory can be
+added to any set of blocks; in these runs it is in three of the 30, blocks 5, 16 and 27. It reads
+the same normalized input as self-attention, and its output, scaled by a gate, is added to the
+residual stream.</p>
+
+<figure class="wide">
+  <a href="assets/arch_block.png"><img src="assets/arch_block.png" alt="A transformer block with the memory branch between self-attention and cross-attention."></a>
+  <figcaption>The memory branch inside a block. The state \(W\) sits outside the
+  block and persists from one chunk to the next.</figcaption>
+</figure>
+
+<p>The state \(W\) is a SwiGLU MLP \(f_W\) (1536 → 6144 → 1536), about the size of the block's
+feed-forward layer. The chunk being generated reads it with its queries \(q\). For the write, the
+keys and values \(k, v\) of the evicted chunk give the gradient of
+\(\sum_i \eta_i \langle f_W(k_i), v_i\rangle\), with a learning rate \(\eta_i\) predicted for each
+token. <a href="https://kellerjordan.github.io/posts/muon/">Muon</a> orthogonalizes this gradient
+before it is added to \(W\), and each column of each weight matrix is then rescaled to its
+previous norm. The layer follows <a href="https://arxiv.org/abs/2505.23884">LaCT</a>, stepped
+causally chunk by chunk.</p>
+<div class="eq">
+$$
+\begin{aligned}
+o_t &= f_{W_{t-1}}(q_t) \\
+\widetilde W &= W_{t-1} + \mathrm{Muon}\Big(\nabla_W \textstyle\sum_i \eta_i \,\langle f_W(k_i),\, v_i\rangle\Big) \\
+W_t[:,j] &= \widetilde W[:,j]\;\lVert W_{t-1}[:,j]\rVert \,/\, \lVert \widetilde W[:,j]\rVert
+\end{aligned}
+$$
+</div>
+<p>The rescaling stops the state from growing over the roughly 80 writes of a one-minute video.
+In runs 3 and 4 the state also decays at each write, and columns are capped at their initial norm
+instead of being reset to it. The gate is bounded and computed from the read, which lets the
+branch stay close to zero when the memory has nothing relevant to add.</p>
+
+<h2>Results</h2>
+<p>All four runs fine-tune the model with <a href="https://arxiv.org/abs/2311.18828">DMD</a>
+distillation, training LoRA adapters and the memory together on 4 GPUs. Run 1 writes the chunk
+being generated. Run 2 writes the evicted chunk, and in 30% of its training rollouts the sink is
+removed, leaving the memory as the only carrier of the start of the video. Run 3 adds limits on
+the memory: its injection is capped at half the residual stream's RMS, its learning rate is
+halved, its gradients are clipped, and its state can decay. Run 4 is run 3 started from
+<a href="https://arxiv.org/abs/2509.22622">LongLive</a>'s released LoRA instead of
+Anchor-Forcing's, and its dashed reference line is that model.</p>
+<p>Each checkpoint is evaluated on the same six prompts and the same noise, once with the memory
+active and once with it zeroed. Identity is the <a href="https://arxiv.org/abs/2304.07193">DINOv2</a>
+cosine similarity between the first and the last frame of a video of about one minute. Motion is
+<a href="https://arxiv.org/abs/2311.17982">VBench</a>'s dynamic degree, the fraction of clips it
+rates as dynamic.</p>
+
+<figure class="wide">
+  <a href="assets/results.png"><img src="assets/results.png" alt="Identity and motion against the training step for four training runs, with the memory active and zeroed."></a>
+  <figcaption>Identity (top) and motion (bottom) against the training step. Blue: memory active.
+  Orange: the same checkpoint with the memory zeroed. Dashed: the model the run started from,
+  before any training.</figcaption>
+</figure>
+
+<p>With the memory active, identity is lower at 10 of the 15 checkpoints, and the mean
+difference over all 15 is −0.07. With one seed, a sign test on 10 of 15 gives p ≈ 0.3: the
+memory is not shown to hurt, but there is no sign that it helps. In runs 1 to 3, the
+memory-zeroed checkpoints also fall below the reference's motion at most steps, and turning the
+memory off at inference does not bring the motion back.</p>
+<p>Two memory-active checkpoints, run 1 at step 1250 and run 2 at step 750, have almost no motion
+left: VBench rates only 23% and 24% of their clips as dynamic. It still gives them a subject
+consistency of 0.97 and 0.98, higher than the 0.95 of the unmodified model.</p>
+
+<h2>Discussion</h2>
+<p>My reading is that the training signal and the metrics reward the same thing: frames that look
+like the ones before them. Chunk-by-chunk distillation does not penalize a video that stops
+moving, and subject consistency goes up when it does. A memory trained this way can satisfy both
+by freezing the video, or by adding the same offset to every frame, without storing anything about
+the subject. I tested one write rule, one objective and one model, and cannot say how far this
+generalizes.</p>
+<p>In a second set of experiments I tested recall directly. The prompt switches from subject A to
+subject B and back to A, and at the return the model is given one latent frame of A: either the
+real frame, or one produced from the memory state by a decoder trained offline. Measured by how
+much the returning subject resembles its first appearance, a frame from a different video helped
+as much as the right one. The gain did not depend on what the frame showed.</p>
+
+<h2>Limitations</h2>
+<p>Each point uses one seed and six prompts, and no measurement was repeated, so there is no
+estimate of the noise. Runs 2 to 4 were evaluated with a single sink frame and the reference with
+three. On the one checkpoint measured both ways, that difference alone costs 0.06 to 0.09 of
+identity, as much as the effects above. Outside run 1, only the comparison between the memory
+active and the memory zeroed is fair.</p>
+
+<footer>
+  <p>Built on <a href="https://github.com/vivoCameraResearch/Anchor-Forcing">Anchor-Forcing</a>
+  and <a href="https://github.com/Wan-Video/Wan2.1">Wan2.1</a>. The code is in a private
+  repository and available on request.</p>
+</footer>
+
+</main>
+</body>
+</html>
