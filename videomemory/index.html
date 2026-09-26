@@ -65,8 +65,8 @@
 <h2>Abstract</h2>
 <p>Streaming video diffusion models generate a video a few frames at a time and attend only to a
 short window of recent frames. When the frames that introduced a subject leave that window, the
-subject's appearance starts to drift. I added a fast-weight memory to such a model
-(<a href="https://github.com/Wan-Video/Wan2.1">Wan2.1-T2V-1.3B</a> with
+subject's appearance starts to drift. After benchmarking eight such models, I added a
+fast-weight memory to the best of them (<a href="https://github.com/Wan-Video/Wan2.1">Wan2.1-T2V-1.3B</a> with
 <a href="https://github.com/vivoCameraResearch/Anchor-Forcing">Anchor-Forcing</a>): an MLP added to a few
 transformer blocks, whose weights are updated during generation, with each chunk that leaves
 the attention window. I trained it in four runs and evaluated every checkpoint twice, with the
@@ -74,6 +74,53 @@ memory active and with it zeroed. Identity was lower with the memory active at 1
 checkpoints. The checkpoints that froze got high subject-consistency scores from VBench, which
 suggests that the objective and the metrics reward frames that resemble the previous ones, and a
 memory can provide that without recalling the subject.</p>
+
+<h2>Starting point</h2>
+<p>Before adding anything, I compared recent streaming video models built on Wan2.1-T2V-1.3B,
+running each released model on the same prompts. The first set is six 60-second videos from a
+single prompt each: three scenes that should keep changing and three calm scenes that should stay
+stable. The second is nine 60-second stories told in six prompts of 10 seconds each, including
+sequences that move the same person across very different places.</p>
+
+<figure class="wide">
+  <a href="assets/benchmark_fox.jpg"><img src="assets/benchmark_fox.jpg" alt="One frame every 10 seconds of a 60-second video of a red fox in a snowy forest, for seven streaming video methods."></a>
+  <figcaption>One of the six single-prompt videos ("A red fox running through a snowy forest at
+  dawn…"), one frame every 10 seconds, for seven of the methods compared.</figcaption>
+</figure>
+
+<div class="table">
+<table>
+  <thead>
+    <tr><th>60 s, single prompt (VBench)</th><th>Dynamic</th><th>Quality</th><th>Semantic</th><th>Total</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Anchor-Forcing</td><td>83.3</td><td>83.1</td><td>28.8</td><td>71.0</td></tr>
+    <tr><td>Reward Forcing</td><td>66.7</td><td>82.0</td><td>27.5</td><td>69.9</td></tr>
+    <tr><td>Deep Forcing</td><td>50.0</td><td>79.7</td><td>26.3</td><td>67.8</td></tr>
+    <tr><td>LongLive</td><td>33.3</td><td>78.3</td><td>28.6</td><td>67.3</td></tr>
+    <tr><td>Rolling Sink</td><td>33.3</td><td>78.5</td><td>27.7</td><td>67.2</td></tr>
+    <tr><td>Infinity-RoPE</td><td>33.3</td><td>77.9</td><td>26.3</td><td>66.5</td></tr>
+    <tr><td>Rolling Forcing</td><td>16.7</td><td>76.6</td><td>27.5</td><td>65.7</td></tr>
+    <tr><td>ShotStream</td><td>16.7</td><td>76.7</td><td>26.1</td><td>65.5</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="note">Six prompts and one seed per method, so these are rough rankings; Dynamic is the
+share of the six videos that VBench rates as dynamic. ShotStream generates 30 seconds instead of
+60.</p>
+
+<p>Anchor-Forcing came first on both sets. On the multi-prompt stories, where four of the methods
+support prompt changes, its total was 72.6, against 66.7 for Infinity-RoPE, 65.7 for LongLive and
+64.0 for ShotStream. I built on it, after reproducing it in my own setup: on 128 MovieGen prompts
+at 30 seconds its VBench quality score is 84.85, against 84.40 reported in the paper on a
+different prompt set.</p>
+<p>My first attempts to keep identity needed no training. On 32 MovieGen prompts at 30 seconds, I
+averaged each evicted frame into the sink, did so only for the subject's tokens found through
+cross-attention, or kept the subject's tokens from the first frame as extra keys and values.
+None raised subject consistency by more than 0.3 points. The averaging variants lowered the
+dynamic degree by 4 to 16 points, and the extra tokens raised it by 6 points but lost 2 points
+of consistency. My reading was that the model, trained with exactly its sink and window, cannot use
+context it never saw in training, which led me to a memory trained together with the model.</p>
 
 <h2>Method</h2>
 <p>The model generates 3 latent frames at a time and attends to 12: the first 3 frames of the
