@@ -29,12 +29,20 @@
   figure img { display: block; width: 100%; height: auto; }
   figcaption { max-width: 720px; margin: 10px auto 0; color: #666; font-size: 0.9rem; line-height: 1.5; }
   .eq { overflow-x: auto; }
+  .table { overflow-x: auto; margin: 8px 0 18px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid #e5e2dc; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; white-space: normal; }
+  thead th { font-weight: 600; border-bottom: 1px solid #bbb; }
+  .note { color: #666; font-size: 0.9rem; }
   footer { margin-top: 48px; color: #666; font-size: 0.88rem; }
   @media (max-width: 560px) {
     body { font-size: 16px; }
     main { padding-top: 36px; }
     h1 { font-size: 1.55rem; }
     .eq .katex-display > .katex { font-size: 0.84em; }
+    table { font-size: 0.8rem; }
+    th, td { padding: 5px 6px; white-space: normal; }
   }
 </style>
 </head>
@@ -44,7 +52,7 @@
 <header>
   <h1>Fast-weight memory for long video generation</h1>
   <p>Aden Elmi</p>
-  <p>Research project, June to September 2026</p>
+  <p>Research project, March to September 2026</p>
 </header>
 
 <figure class="wide">
@@ -137,6 +145,38 @@ memory off at inference does not bring the motion back.</p>
 left: VBench rates only 23% and 24% of their clips as dynamic. It still gives them a subject
 consistency of 0.97 and 0.98, higher than the 0.95 of the unmodified model.</p>
 
+<h2>Recall after a prompt switch</h2>
+<p>I also tested recall directly, on the final checkpoint of run 4. The prompt switches from
+subject A to other subjects and later back to A. At the return, each method gets a chance to
+bring A back, and I measure how close the returning subject is to a clean rendering of A (DINO
+similarity), relative to the same model with the memory off. I compared four methods:
+LongLive as released, a frame bank in the style of
+<a href="https://arxiv.org/abs/2605.16003">Echo-Forcing</a> that stores past frames and
+re-inserts the one whose prompt matches, the real past frame of A inserted directly, and a frame
+decoded from my memory's state by a decoder trained offline.</p>
+
+<div class="table">
+<table>
+  <thead>
+    <tr><th>Change in identity at the return</th><th>LongLive</th><th>Frame bank</th><th>Real frame</th><th>Decoded frame</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>A opens the video (5 scenarios)</td><td>+0.15 to +0.25</td><td>+0.20 to +0.30</td><td>+0.22 to +0.33</td><td>−0.01 to +0.13</td></tr>
+    <tr><td>A appears later (2 scenarios)</td><td>−0.10, −0.06</td><td>+0.03, +0.09</td><td>+0.03, +0.09</td><td>+0.43, +0.36</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="note">24 videos per scenario. In the second row only the decoded frame is significant
+(24 of 24 and 23 of 24 videos improve).</p>
+
+<p>When A opens the video, the methods that reuse real frames win, because the frames kept from
+the start of the video already show A. When A appears later, they fail: the frames they reuse
+are contaminated by whatever opened the video. The decoded frame looked like the only method
+that recalls A in that case, until the controls. A frame decoded from the state of a different
+video gives the same gain, and leaves no trace of that other video in the result. The gain comes
+from replacing the most recent frame of the attention window, which clears the intermediate
+scene and lets the prompt redraw A. What the memory holds plays no measurable part.</p>
+
 <h2>Discussion</h2>
 <p>My reading is that the training signal and the metrics reward the same thing: frames that look
 like the ones before them. Chunk-by-chunk distillation does not penalize a video that stops
@@ -144,12 +184,6 @@ moving, and subject consistency goes up when it does. A memory trained this way 
 by freezing the video, or by adding the same offset to every frame, without storing anything about
 the subject. I tested one write rule, one objective and one model, and cannot say how far this
 generalizes.</p>
-<p>In a second set of experiments I tested recall directly. The prompt switches from subject A to
-subject B and back to A, and at the return the model is given one latent frame of A: either the
-real frame, or one produced from the memory state by a decoder trained offline. Measured by how
-much the returning subject resembles its first appearance, a frame from a different video helped
-as much as the right one. The gain did not depend on what the frame showed.</p>
-
 <h2>Limitations</h2>
 <p>Each point uses one seed and six prompts, and no measurement was repeated, so there is no
 estimate of the noise. Runs 2 to 4 were evaluated with a single sink frame and the reference with
