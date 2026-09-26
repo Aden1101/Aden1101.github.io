@@ -104,7 +104,7 @@ nine 60-second stories told in six prompts.</p>
 <p class="note">Six prompts and one seed per method. ShotStream generates 30 seconds instead of
 60.</p>
 
-<p>Anchor-Forcing had the highest quality and the most motion on both sets; on the multi-prompt
+<p>Anchor-Forcing had the highest quality and the most motion on both sets. On the multi-prompt
 stories its quality score was 85.7, against 77.1 for LongLive. I built on it, after reproducing it
 in my own setup: on 128 MovieGen prompts at 30 seconds its VBench quality score is 84.85, against
 84.40 reported in the paper on a different prompt set. Training-free ways of keeping identity,
@@ -118,7 +118,7 @@ A prompt like "a woman in a red coat" fits many women. Once the frames that show
 gone, her face and clothes start to change.</p>
 <p>In runs 2 to 4 the memory is written with the chunk that has just left the window. Run 1
 writes the chunk being generated instead, which attention can already see. The memory can be
-added to any set of blocks; in these runs it is in three of the 30, blocks 5, 16 and 27.</p>
+added to any set of blocks. In these runs it is in three of the 30, blocks 5, 16 and 27.</p>
 
 <figure class="wide">
   <a href="assets/arch_block.png"><img src="assets/arch_block.png" alt="A transformer block with the memory branch between self-attention and cross-attention."></a>
@@ -126,7 +126,7 @@ added to any set of blocks; in these runs it is in three of the 30, blocks 5, 16
 
 <p>The state \(W\) is a SwiGLU MLP \(f_W\) (1536 → 6144 → 1536), about the size of the block's
 feed-forward layer, following <a href="https://arxiv.org/abs/2505.23884">LaCT</a>. The chunk
-being generated reads it with its queries \(q\); the evicted chunk writes to it with its keys and
+being generated reads it with its queries \(q\), and the evicted chunk writes to it with its keys and
 values \(k, v\) and learning rates \(\eta_i\) predicted for each token, through
 <a href="https://kellerjordan.github.io/posts/muon/">Muon</a>:</p>
 <div class="eq">
@@ -193,12 +193,14 @@ decoded from my memory's state by a decoder trained offline.</p>
 (24 of 24 and 23 of 24 videos improve).</p>
 
 <p>When A opens the video, the methods that reuse real frames win, because the frames kept from
-the start of the video already show A. When A appears later, they fail: the frames they reuse
-are contaminated by whatever opened the video. The decoded frame looked like the only method
-that recalls A in that case, until the controls. A frame decoded from the state of a different
-video gives the same gain, and leaves no trace of that other video in the result. The gain comes
-from replacing the most recent frame of the attention window, which clears the intermediate
-scene and lets the prompt redraw A. What the memory holds plays no measurable part.</p>
+the start of the video already show A. When A appears later, they fail. Those first frames stay in
+the attention context for the whole video and keep showing whatever opened it, so even the frames
+of A's first appearance carry part of that opening, and re-inserting them brings it back. The
+decoded frame looked like the only method that recalls A in that case, until the controls. A frame
+decoded from the state of a different video gives the same gain, and leaves no trace of that other
+video in the result. What helps is a clean frame in the most recent slot of the window: it clears
+the intermediate scene without bringing back the opening, and the prompt redraws A. What the
+memory holds plays no measurable part.</p>
 
 <h2>Discussion</h2>
 <p>My reading is that the training signal and the metrics reward the same thing: frames that look
