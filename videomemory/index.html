@@ -57,9 +57,8 @@
 
 <figure class="wide">
   <a href="assets/arch_context.png"><img src="assets/arch_context.png" alt="Three consecutive generation steps. The attention window slides forward, and the chunk it drops is written into the memory."></a>
-  <figcaption>Three consecutive steps of generation. Attention covers the sink (the first chunk of
-  the video) and the three most recent chunks. In runs 2 to 4, the chunk that has just left this
-  window is written into the memory, the only way older chunks can still affect generation.</figcaption>
+  <figcaption>The write used in runs 2 to 4. Once a chunk has left the window, the memory is the only
+  way it can still affect generation.</figcaption>
 </figure>
 
 <h2>Abstract</h2>
@@ -77,50 +76,40 @@ memory can provide that without recalling the subject.</p>
 
 <h2>Starting point</h2>
 <p>Before adding anything, I compared recent streaming video models built on Wan2.1-T2V-1.3B,
-running each released model on the same prompts. The first set is six 60-second videos from a
-single prompt each: three scenes that should keep changing and three calm scenes that should stay
-stable. The second is nine 60-second stories told in six prompts of 10 seconds each, including
-sequences that move the same person across very different places.</p>
+running each released model on the same prompts: six 60-second videos from a single prompt, and
+nine 60-second stories told in six prompts.</p>
 
 <figure class="wide">
   <a href="assets/benchmark_fox.jpg"><img src="assets/benchmark_fox.jpg" alt="One frame every 10 seconds of a 60-second video of a red fox in a snowy forest, for seven streaming video methods."></a>
-  <figcaption>One of the six single-prompt videos ("A red fox running through a snowy forest at
-  dawn…"), one frame every 10 seconds, for seven of the methods compared.</figcaption>
+  <figcaption>"A red fox running through a snowy forest at dawn."</figcaption>
 </figure>
 
 <div class="table">
 <table>
   <thead>
-    <tr><th>60 s, single prompt (VBench)</th><th>Dynamic</th><th>Quality</th><th>Semantic</th><th>Total</th></tr>
+    <tr><th>60 s, single prompt (VBench)</th><th>Quality</th><th>Dynamic</th></tr>
   </thead>
   <tbody>
-    <tr><td>Anchor-Forcing</td><td>83.3</td><td>83.1</td><td>28.8</td><td>71.0</td></tr>
-    <tr><td>Reward Forcing</td><td>66.7</td><td>82.0</td><td>27.5</td><td>69.9</td></tr>
-    <tr><td>Deep Forcing</td><td>50.0</td><td>79.7</td><td>26.3</td><td>67.8</td></tr>
-    <tr><td>LongLive</td><td>33.3</td><td>78.3</td><td>28.6</td><td>67.3</td></tr>
-    <tr><td>Rolling Sink</td><td>33.3</td><td>78.5</td><td>27.7</td><td>67.2</td></tr>
-    <tr><td>Infinity-RoPE</td><td>33.3</td><td>77.9</td><td>26.3</td><td>66.5</td></tr>
-    <tr><td>Rolling Forcing</td><td>16.7</td><td>76.6</td><td>27.5</td><td>65.7</td></tr>
-    <tr><td>ShotStream</td><td>16.7</td><td>76.7</td><td>26.1</td><td>65.5</td></tr>
+    <tr><td>Anchor-Forcing</td><td>83.1</td><td>83.3</td></tr>
+    <tr><td>Reward Forcing</td><td>82.0</td><td>66.7</td></tr>
+    <tr><td>Deep Forcing</td><td>79.7</td><td>50.0</td></tr>
+    <tr><td>Rolling Sink</td><td>78.5</td><td>33.3</td></tr>
+    <tr><td>LongLive</td><td>78.3</td><td>33.3</td></tr>
+    <tr><td>Infinity-RoPE</td><td>77.9</td><td>33.3</td></tr>
+    <tr><td>ShotStream</td><td>76.7</td><td>16.7</td></tr>
+    <tr><td>Rolling Forcing</td><td>76.6</td><td>16.7</td></tr>
   </tbody>
 </table>
 </div>
-<p class="note">Six prompts and one seed per method, so these are rough rankings; Dynamic is the
-share of the six videos that VBench rates as dynamic. ShotStream generates 30 seconds instead of
+<p class="note">Six prompts and one seed per method. ShotStream generates 30 seconds instead of
 60.</p>
 
-<p>Anchor-Forcing came first on both sets. On the multi-prompt stories, where four of the methods
-support prompt changes, its total was 72.6, against 66.7 for Infinity-RoPE, 65.7 for LongLive and
-64.0 for ShotStream. I built on it, after reproducing it in my own setup: on 128 MovieGen prompts
-at 30 seconds its VBench quality score is 84.85, against 84.40 reported in the paper on a
-different prompt set.</p>
-<p>My first attempts to keep identity needed no training. On 32 MovieGen prompts at 30 seconds, I
-averaged each evicted frame into the sink, did so only for the subject's tokens found through
-cross-attention, or kept the subject's tokens from the first frame as extra keys and values.
-None raised subject consistency by more than 0.3 points. The averaging variants lowered the
-dynamic degree by 4 to 16 points, and the extra tokens raised it by 6 points but lost 2 points
-of consistency. My reading was that the model, trained with exactly its sink and window, cannot use
-context it never saw in training, which led me to a memory trained together with the model.</p>
+<p>Anchor-Forcing had the highest quality and the most motion on both sets; on the multi-prompt
+stories its quality score was 85.7, against 77.1 for LongLive. I built on it, after reproducing it
+in my own setup: on 128 MovieGen prompts at 30 seconds its VBench quality score is 84.85, against
+84.40 reported in the paper on a different prompt set. Training-free ways of keeping identity,
+such as averaging evicted frames into the sink, did not work, so I trained a memory with the
+model.</p>
 
 <h2>Method</h2>
 <p>The model generates 3 latent frames at a time and attends to 12: the first 3 frames of the
@@ -129,24 +118,17 @@ A prompt like "a woman in a red coat" fits many women. Once the frames that show
 gone, her face and clothes start to change.</p>
 <p>In runs 2 to 4 the memory is written with the chunk that has just left the window. Run 1
 writes the chunk being generated instead, which attention can already see. The memory can be
-added to any set of blocks; in these runs it is in three of the 30, blocks 5, 16 and 27. It reads
-the same normalized input as self-attention, and its output, scaled by a gate, is added to the
-residual stream.</p>
+added to any set of blocks; in these runs it is in three of the 30, blocks 5, 16 and 27.</p>
 
 <figure class="wide">
   <a href="assets/arch_block.png"><img src="assets/arch_block.png" alt="A transformer block with the memory branch between self-attention and cross-attention."></a>
-  <figcaption>The memory branch inside a block. The state \(W\) sits outside the
-  block and persists from one chunk to the next.</figcaption>
 </figure>
 
 <p>The state \(W\) is a SwiGLU MLP \(f_W\) (1536 → 6144 → 1536), about the size of the block's
-feed-forward layer. The chunk being generated reads it with its queries \(q\). For the write, the
-keys and values \(k, v\) of the evicted chunk give the gradient of
-\(\sum_i \eta_i \langle f_W(k_i), v_i\rangle\), with a learning rate \(\eta_i\) predicted for each
-token. <a href="https://kellerjordan.github.io/posts/muon/">Muon</a> orthogonalizes this gradient
-before it is added to \(W\), and each column of each weight matrix is then rescaled to its
-previous norm. The layer follows <a href="https://arxiv.org/abs/2505.23884">LaCT</a>, stepped
-causally chunk by chunk.</p>
+feed-forward layer, following <a href="https://arxiv.org/abs/2505.23884">LaCT</a>. The chunk
+being generated reads it with its queries \(q\); the evicted chunk writes to it with its keys and
+values \(k, v\) and learning rates \(\eta_i\) predicted for each token, through
+<a href="https://kellerjordan.github.io/posts/muon/">Muon</a>:</p>
 <div class="eq">
 $$
 \begin{aligned}
@@ -156,38 +138,32 @@ W_t[:,j] &= \widetilde W[:,j]\;\lVert W_{t-1}[:,j]\rVert \,/\, \lVert \widetilde
 \end{aligned}
 $$
 </div>
-<p>The rescaling stops the state from growing over the roughly 80 writes of a one-minute video.
+<p>The last line keeps the state from growing over the roughly 80 writes of a one-minute video.
 In runs 3 and 4 the state also decays at each write, and columns are capped at their initial norm
-instead of being reset to it. The gate is bounded and computed from the read, which lets the
-branch stay close to zero when the memory has nothing relevant to add.</p>
+instead. The gate is bounded and computed from the read, so the branch can stay close to zero
+when the memory has nothing relevant to add.</p>
 
 <h2>Results</h2>
 <p>All four runs fine-tune the model with <a href="https://arxiv.org/abs/2311.18828">DMD</a>
-distillation, training LoRA adapters and the memory together on 4 GPUs. Run 1 writes the chunk
-being generated. Run 2 writes the evicted chunk, and in 30% of its training rollouts the sink is
-removed, leaving the memory as the only carrier of the start of the video. Run 3 adds limits on
-the memory: its injection is capped at half the residual stream's RMS, its learning rate is
-halved, its gradients are clipped, and its state can decay. Run 4 is run 3 started from
-<a href="https://arxiv.org/abs/2509.22622">LongLive</a>'s released LoRA instead of
-Anchor-Forcing's, and its dashed reference line is that model.</p>
-<p>Each checkpoint is evaluated on the same six prompts and the same noise, once with the memory
-active and once with it zeroed. Identity is the <a href="https://arxiv.org/abs/2304.07193">DINOv2</a>
-cosine similarity between the first and the last frame of a video of about one minute. Motion is
-<a href="https://arxiv.org/abs/2311.17982">VBench</a>'s dynamic degree, the fraction of clips it
+distillation, training LoRA adapters and the memory together on 4 GPUs. Run 2 also removes the
+sink in 30% of its training rollouts, leaving the memory as the only carrier of the start of the
+video. Run 3 adds limits on the memory: its injection is capped at half the residual stream's
+RMS, its learning rate is halved, its gradients are clipped, and its state can decay. Run 4 is
+run 3 started from <a href="https://arxiv.org/abs/2509.22622">LongLive</a>'s released LoRA
+instead of Anchor-Forcing's, and its dashed reference line is that model.</p>
+<p>Each checkpoint generates videos of about one minute from the same six prompts and the same
+noise, once with the memory active and once with it zeroed. Identity uses
+<a href="https://arxiv.org/abs/2304.07193">DINOv2</a>, and motion is
+<a href="https://arxiv.org/abs/2311.17982">VBench</a>'s dynamic degree, the share of clips it
 rates as dynamic.</p>
 
 <figure class="wide">
   <a href="assets/results.png"><img src="assets/results.png" alt="Identity and motion against the training step for four training runs, with the memory active and zeroed."></a>
-  <figcaption>Identity (top) and motion (bottom) against the training step. Blue: memory active.
-  Orange: the same checkpoint with the memory zeroed. Dashed: the model the run started from,
-  before any training.</figcaption>
 </figure>
 
 <p>With the memory active, identity is lower at 10 of the 15 checkpoints, and the mean
-difference over all 15 is −0.07. With one seed, a sign test on 10 of 15 gives p ≈ 0.3: the
-memory is not shown to hurt, but there is no sign that it helps. In runs 1 to 3, the
-memory-zeroed checkpoints also fall below the reference's motion at most steps, and turning the
-memory off at inference does not bring the motion back.</p>
+difference over all 15 is −0.07. In runs 1 to 3 the checkpoints lose
+motion against the reference even with the memory zeroed.</p>
 <p>Two memory-active checkpoints, run 1 at step 1250 and run 2 at step 750, have almost no motion
 left: VBench rates only 23% and 24% of their clips as dynamic. It still gives them a subject
 consistency of 0.97 and 0.98, higher than the 0.95 of the unmodified model.</p>
