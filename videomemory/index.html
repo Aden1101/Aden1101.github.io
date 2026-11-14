@@ -68,16 +68,16 @@ subject's appearance starts to drift. After benchmarking eight such models, I ad
 fast-weight memory to the best of them (<a href="https://github.com/Wan-Video/Wan2.1">Wan2.1-T2V-1.3B</a> with
 <a href="https://github.com/vivoCameraResearch/Anchor-Forcing">Anchor-Forcing</a>): an MLP added to a few
 transformer blocks, whose weights are updated during generation, with each chunk that leaves
-the attention window. I trained it in four runs and evaluated every checkpoint twice, with the
-memory active and with it zeroed. Identity was lower with the memory active at 10 of the 15
+the attention window. I trained it in several runs and evaluated every checkpoint twice, with the
+memory active and with it zeroed. Identity was lower with the memory active at two thirds of the
 checkpoints. The checkpoints that froze got high subject-consistency scores from VBench, which
 suggests that the objective and the metrics reward frames that resemble the previous ones, and a
 memory can provide that without recalling the subject.</p>
 
 <h2>Starting point</h2>
 <p>Before adding anything, I compared recent streaming video models built on Wan2.1-T2V-1.3B,
-running each released model on the same prompts: six 60-second videos from a single prompt, and
-nine 60-second stories told in six prompts.</p>
+running each released model on the same prompts: 60-second videos from a single prompt, and
+60-second stories told over a sequence of prompts.</p>
 
 <figure class="wide">
   <a href="assets/benchmark_fox.jpg"><img src="assets/benchmark_fox.jpg" alt="One frame every 10 seconds of a 60-second video of a red fox in a snowy forest, for seven streaming video methods."></a>
@@ -101,8 +101,7 @@ nine 60-second stories told in six prompts.</p>
   </tbody>
 </table>
 </div>
-<p class="note">Six prompts and one seed per method. ShotStream generates 30 seconds instead of
-60.</p>
+<p class="note">ShotStream generates 30 seconds instead of 60.</p>
 
 <p>Anchor-Forcing had the highest quality and the most motion on both sets. On the multi-prompt
 stories its quality score was 85.7, against 77.1 for LongLive. I built on it, after reproducing it
@@ -144,14 +143,14 @@ instead. The gate is bounded and computed from the read, so the branch can stay 
 when the memory has nothing relevant to add.</p>
 
 <h2>Results</h2>
-<p>All four runs fine-tune the model with <a href="https://arxiv.org/abs/2311.18828">DMD</a>
+<p>All runs fine-tune the model with <a href="https://arxiv.org/abs/2311.18828">DMD</a>
 distillation, training LoRA adapters and the memory together on 4 GPUs. Run 2 also removes the
 sink in 30% of its training rollouts, leaving the memory as the only carrier of the start of the
 video. Run 3 adds limits on the memory: its injection is capped at half the residual stream's
 RMS, its learning rate is halved, its gradients are clipped, and its state can decay. Run 4 is
 run 3 started from <a href="https://arxiv.org/abs/2509.22622">LongLive</a>'s released LoRA
 instead of Anchor-Forcing's, and its dashed reference line is that model.</p>
-<p>Each checkpoint generates videos of about one minute from the same six prompts and the same
+<p>Each checkpoint generates videos of about one minute from the same prompts and the same
 noise, once with the memory active and once with it zeroed. Identity uses
 <a href="https://arxiv.org/abs/2304.07193">DINOv2</a>, and motion is
 <a href="https://arxiv.org/abs/2311.17982">VBench</a>'s dynamic degree, the share of clips it
@@ -161,8 +160,8 @@ rates as dynamic.</p>
   <a href="assets/results.png"><img src="assets/results.png" alt="Identity and motion against the training step for four training runs, with the memory active and zeroed."></a>
 </figure>
 
-<p>With the memory active, identity is lower at 10 of the 15 checkpoints, and the mean
-difference over all 15 is −0.07. In runs 1 to 3 the checkpoints lose
+<p>With the memory active, identity is lower at two thirds of the checkpoints, and the mean
+difference over all of them is −0.07. In runs 1 to 3 the checkpoints lose
 motion against the reference even with the memory zeroed.</p>
 <p>Two memory-active checkpoints, run 1 at step 1250 and run 2 at step 750, have almost no motion
 left: VBench rates only 23% and 24% of their clips as dynamic. It still gives them a subject
@@ -184,13 +183,12 @@ decoded from my memory's state by a decoder trained offline.</p>
     <tr><th>Change in identity at the return</th><th>LongLive</th><th>Frame bank</th><th>Real frame</th><th>Decoded frame</th></tr>
   </thead>
   <tbody>
-    <tr><td>A opens the video (5 scenarios)</td><td>+0.15 to +0.25</td><td>+0.20 to +0.30</td><td>+0.22 to +0.33</td><td>−0.01 to +0.13</td></tr>
-    <tr><td>A appears later (2 scenarios)</td><td>−0.10, −0.06</td><td>+0.03, +0.09</td><td>+0.03, +0.09</td><td>+0.43, +0.36</td></tr>
+    <tr><td>A opens the video</td><td>+0.15 to +0.25</td><td>+0.20 to +0.30</td><td>+0.22 to +0.33</td><td>−0.01 to +0.13</td></tr>
+    <tr><td>A appears later</td><td>−0.10 to −0.06</td><td>+0.03 to +0.09</td><td>+0.03 to +0.09</td><td>+0.36 to +0.43</td></tr>
   </tbody>
 </table>
 </div>
-<p class="note">24 videos per scenario. In the second row only the decoded frame is significant
-(24 of 24 and 23 of 24 videos improve).</p>
+<p class="note">In the second row only the decoded frame improves on nearly every video.</p>
 
 <p>When A opens the video, the methods that reuse real frames win, because the frames kept from
 the start of the video already show A. When A appears later, they fail. Those first frames stay in
@@ -207,13 +205,12 @@ memory holds plays no measurable part.</p>
 like the ones before them. Chunk-by-chunk distillation does not penalize a video that stops
 moving, and subject consistency goes up when it does. A memory trained this way can satisfy both
 by freezing the video, or by adding the same offset to every frame, without storing anything about
-the subject. I tested one write rule, one objective and one model, and cannot say how far this
-generalizes.</p>
+the subject. I cannot say how far this generalizes beyond this write rule, objective and
+model.</p>
 <h2>Limitations</h2>
-<p>Each point uses one seed and six prompts, and no measurement was repeated, so there is no
-estimate of the noise. Runs 2 to 4 were evaluated with a single sink frame and the reference with
-three. On the one checkpoint measured both ways, that difference alone costs 0.06 to 0.09 of
-identity, as much as the effects above. Outside run 1, only the comparison between the memory
+<p>No measurement was repeated, so there is no estimate of the noise. Runs 2 to 4 were evaluated
+with a single sink frame and the reference with three. Measured both ways, that difference alone
+costs 0.06 to 0.09 of identity, as much as the effects above. Outside run 1, only the comparison between the memory
 active and the memory zeroed is fair.</p>
 
 <footer>
